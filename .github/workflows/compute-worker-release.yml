@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m compileall -q swing_compute autonomous_car scripts/run_compute_worker.py scripts/run_compute_manager.py
           python scripts/run_compute_worker.py --help
-          python -c "import swing_compute.windows_manager as m; assert m.MANAGER_VERSION == '0.3.0'; print(m.MANAGER_VERSION)"
+          python -c "import swing_compute.windows_manager as m; assert m.MANAGER_VERSION == '0.4.0'; print(m.MANAGER_VERSION)"
 
       - name: Validate GPS temporal and RECORD preview contracts
         shell: pwsh
