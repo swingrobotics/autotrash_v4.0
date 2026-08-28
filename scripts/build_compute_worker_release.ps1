@@ -238,6 +238,7 @@ if ($Publish) {
         }
     }
 
+    $Repository = "swingrobotics/autotrash_v4.0"
     $Tag = "compute-worker-v$Version"
     $Notes = Join-Path $Root "installer-dist\release-notes.md"
     @"
@@ -253,10 +254,10 @@ Windows Compute Worker installer built from $SourceDescription.
 - RECORD preview has no vehicle control authority (`CONTROL NONE`).
 "@ | Set-Content -Path $Notes -Encoding UTF8
 
-    & gh release view $Tag --repo swingrobotics/gnss *> $null
+    & gh release view $Tag --repo $Repository *> $null
     if ($LASTEXITCODE -eq 0) {
         Invoke-Checked "Upload release assets" {
-            gh release upload $Tag $Installer $HashFile --clobber --repo swingrobotics/gnss
+            gh release upload $Tag $Installer $HashFile --clobber --repo $Repository
         }
     } else {
         Invoke-Checked "Create GitHub Release $Tag" {
@@ -264,7 +265,7 @@ Windows Compute Worker installer built from $SourceDescription.
                 --target main `
                 --title "SWING Compute Worker $Version" `
                 --notes-file $Notes `
-                --repo swingrobotics/gnss
+                --repo $Repository
         }
     }
     Write-Host "`nPublished GitHub Release: $Tag" -ForegroundColor Green
