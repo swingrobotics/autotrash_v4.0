@@ -22,7 +22,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 
-MANAGER_VERSION = "0.3.0"
+MANAGER_VERSION = "0.4.0"
 WORKER_HOST = "127.0.0.1"
 WORKER_PORT = 8765
 WORKER_BASE_URL = f"http://{WORKER_HOST}:{WORKER_PORT}"
