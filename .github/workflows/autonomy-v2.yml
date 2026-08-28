@@ -1,0 +1,219 @@
+name: Autonomy V2
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  core-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        run: |
+          python -m compileall -q autonomous_car camera_stream v2_option_panel.py vehicle_settings_panel.py vehicle_runtime_settings.py unified_dashboard.py unified_dashboard_extras.py unified_dashboard_data_tools.py user_management_hmi.py record_replay_auto_hmi.py gps_model_lifecycle_hmi.py settings_page_shell.py settings_hmi_polish.py operator_hmi_style.py server_v2.py server_v2_ai.py server_v2_full.py server_v2_release.py server_v2_gps_ai.py server_v2_final.py
+      - name: V2 policy and registry regression
+        run: python -m autonomous_car.simulation.validate_autonomy_v2
+      - name: V1 primary + V2 option dashboard regression
+        run: python -m autonomous_car.simulation.validate_unified_dashboard_v2
+      - name: Operator HMI presentation regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from operator_hmi_style import OPERATOR_HMI_STYLE
+
+          style = OPERATOR_HMI_STYLE.decode('utf-8')
+          final_source = Path('server_v2_final.py').read_text(encoding='utf-8')
+          required = [
+              'id="operator-hmi-style"',
+              '--critical:#b4232e',
+              '.camera-overlay{display:none!important}',
+              '#v2-main-estop',
+              '.lidar-summary-value',
+              '.v2-mode-card',
+          ]
+          if not all(item in style for item in required):
+              raise SystemExit('operator HMI style contract missing')
+          if 'from operator_hmi_style import OPERATOR_HMI_STYLE' not in final_source:
+              raise SystemExit('operator HMI style is not imported')
+          if '+ OPERATOR_HMI_STYLE' not in final_source:
+              raise SystemExit('operator HMI style is not injected last')
+          print('operator HMI presentation layer verified')
+          PY
+      - name: Guided setup and data management regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from user_management_hmi import USER_MANAGEMENT_HMI
+          from record_replay_auto_hmi import RECORD_REPLAY_AUTO_HMI
+          from gps_model_lifecycle_hmi import GPS_MODEL_LIFECYCLE_HMI
+          from settings_page_shell import SETTINGS_PAGE_SHELL
+          from settings_hmi_polish import SETTINGS_HMI_POLISH
+
+          html = USER_MANAGEMENT_HMI.decode('utf-8')
+          replay = RECORD_REPLAY_AUTO_HMI.decode('utf-8')
+          gps_lifecycle = GPS_MODEL_LIFECYCLE_HMI.decode('utf-8')
+          shell = SETTINGS_PAGE_SHELL.decode('utf-8')
+          polish = SETTINGS_HMI_POLISH.decode('utf-8')
+          data_tools = Path('unified_dashboard_data_tools.py').read_text(encoding='utf-8')
+          required = [
+              "box.id='setup-overview'",
+              "aiChecked=new Set",
+              "gpsChecked=new Set",
+              "records.length<2",
+              "filter(m=>String(m.route_id||'')===routeId)",
+              "map_id:null,name,refine:false",
+              "ntrip-enabled-user",
+              "datasetRefs",
+              "record-replay-slider",
+              "#ai-stage,#ai-stage-set{display:none!important}",
+          ]
+          missing = [item for item in required if item not in html]
+          if missing:
+              raise SystemExit(f'guided management contract missing: {missing}')
+          if "slider.addEventListener('change',loadAt)" not in replay:
+              raise SystemExit('record replay slider does not auto-load selected time')
+          if "GPS 모델 검증 상태" not in gps_lifecycle or "G?.controller?.active" not in gps_lifecycle:
+              raise SystemExit('GPS model lifecycle guidance/active guard missing')
+          shell_required = [
+              "back.href='/'",
+              "back.textContent='← 차량 대시보드'",
+              "title.textContent='설정 및 데이터 관리'",
+              "data:'주행 데이터'",
+              "gps:'GPS 자율주행'",
+              "local:'지도 자율주행'",
+              "hardware:'장치 점검'",
+              "system:'연결·전원'",
+          ]
+          if not all(item in shell for item in shell_required):
+              raise SystemExit('settings page hierarchy/navigation contract missing')
+          polish_required = [
+              'id="settings-hmi-polish"',
+              'grid-template-columns:repeat(5,minmax(0,1fr))',
+              'box-shadow:inset 0 -2px 0 var(--settings-accent)',
+              'border-radius:6px!important',
+              'font-family:Inter,Pretendard,"Noto Sans KR"',
+              "document.body.classList.add('settings-hmi-page')",
+              "button.setAttribute('aria-current'",
+          ]
+          if not all(item in polish for item in polish_required):
+              raise SystemExit('settings HMI polish contract missing')
+          for imported in [
+              'from user_management_hmi import USER_MANAGEMENT_HMI',
+              'from record_replay_auto_hmi import RECORD_REPLAY_AUTO_HMI',
+              'from gps_model_lifecycle_hmi import GPS_MODEL_LIFECYCLE_HMI',
+              'from settings_page_shell import SETTINGS_PAGE_SHELL',
+              'from settings_hmi_polish import SETTINGS_HMI_POLISH',
+          ]:
+              if imported not in data_tools:
+                  raise SystemExit(f'management layer import missing: {imported}')
+          expected = '+ USER_MANAGEMENT_HMI + RECORD_REPLAY_AUTO_HMI + GPS_MODEL_LIFECYCLE_HMI + SETTINGS_PAGE_SHELL + SETTINGS_HMI_POLISH'
+          if expected not in data_tools:
+              raise SystemExit('settings presentation layers are not appended last')
+          print('guided setup and settings HMI verified')
+          PY
+      - name: Management data integrity guards
+        run: |
+          python - <<'PY'
+          import os
+          import tempfile
+          from pathlib import Path
+
+          from autonomous_car.ai import ModelRegistry, ModelRegistryError
+
+          with tempfile.TemporaryDirectory() as directory:
+              registry = ModelRegistry(os.path.join(directory, 'models'))
+              registry.register('drive_v1', 'drive_v1.onnx', validation_stage='TRAINED')
+              try:
+                  registry.update_lifecycle('drive_v1', 'CLOSED_AREA_VALIDATED')
+              except ModelRegistryError:
+                  pass
+              else:
+                  raise SystemExit('model lifecycle skip was not rejected')
+              assert registry.update_lifecycle('drive_v1', 'OFFLINE_VALIDATED')['validation_stage'] == 'OFFLINE_VALIDATED'
+              assert registry.update_lifecycle('drive_v1', 'CLOSED_AREA_VALIDATED')['validation_stage'] == 'CLOSED_AREA_VALIDATED'
+              assert registry.update_lifecycle('drive_v1', 'AUTO_ALLOWED')['validation_stage'] == 'AUTO_ALLOWED'
+              assert registry.update_lifecycle('drive_v1', 'TRAINED')['validation_stage'] == 'TRAINED'
+
+          release_source = Path('server_v2_release.py').read_text(encoding='utf-8')
+          required = [
+              'def _datasets_using_recording(session_name):',
+              'RECORDING_IN_USE_BY_DATASET',
+              'full.legacy.delete_recording_session = _delete_recording_session_guarded',
+          ]
+          if not all(item in release_source for item in required):
+              raise SystemExit('recording dependency deletion guard missing')
+          print('management data integrity guards verified')
+          PY
+      - name: Vehicle settings persistence and live-apply regression
+        run: python -m autonomous_car.simulation.validate_vehicle_settings_v2
+      - name: Runtime stop latency and I/O hardening regression
+        run: python -m autonomous_car.simulation.validate_runtime_hardening_v2
+      - name: Final service hardening and status-cache regression
+        run: python -m autonomous_car.simulation.validate_service_hardening_v2
+      - name: Production runtime fail-safe regression
+        run: python -m autonomous_car.simulation.validate_production_guard_v2
+      - name: Dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          from v2_option_panel import V2_OPTION_PANEL
+          from vehicle_settings_panel import VEHICLE_SETTINGS_PANEL
+          from unified_dashboard import UNIFIED_DASHBOARD_HTML
+          from unified_dashboard_extras import UNIFIED_DASHBOARD_EXTRAS
+          from unified_dashboard_data_tools import UNIFIED_DASHBOARD_DATA_TOOLS
+          sources = [
+              V2_OPTION_PANEL,
+              VEHICLE_SETTINGS_PANEL,
+              UNIFIED_DASHBOARD_HTML,
+              UNIFIED_DASHBOARD_EXTRAS,
+              UNIFIED_DASHBOARD_DATA_TOOLS,
+          ]
+          index = 0
+          for source in sources:
+              html = source.decode('utf-8')
+              for script in re.findall(r'<script[^>]*>(.*?)</script>', html, flags=re.S | re.I):
+                  Path(f'/tmp/dashboard-js-{index}.js').write_text(script, encoding='utf-8')
+                  index += 1
+          if index == 0:
+              raise SystemExit('No dashboard JavaScript found')
+          print(f'extracted {index} dashboard scripts')
+          PY
+          for script in /tmp/dashboard-js-*.js; do node --check "$script"; done
+      - name: GPS-conditioned route/model regression
+        run: python -m autonomous_car.simulation.validate_gps_ai_route_v2
+      - name: GPS ON RECORD to conditioned dataset regression
+        run: python -m autonomous_car.simulation.validate_gps_ai_dataset_v2
+      - name: Legacy AUTO_GPS planner geometry regression
+        run: python -m autonomous_car.simulation.validate_auto_gps_v2
+      - name: AUTO_LOCAL mapping and navigation regression
+        run: python -m autonomous_car.simulation.validate_auto_local_v2
+      - name: AUTO_AI dataset regression
+        run: python -m autonomous_car.simulation.validate_ai_dataset_v2
+      - name: AUTO_AI environment selection regression
+        run: python -m autonomous_car.simulation.validate_auto_ai_environment_v2
+      - name: Manual takeover isolation regression
+        run: python -m autonomous_car.simulation.validate_runtime_guard_v2
+
+  ai-training-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-ai-training.txt
+      - name: Install AI training/export dependencies
+        run: python -m pip install -r requirements-ai-training.txt
+      - name: AUTO_AI train evaluate export and ONNX inference
+        run: python -m autonomous_car.simulation.validate_ai_training_v2
+      - name: AUTO_GPS train evaluate export and ONNX inference
+        run: python -m autonomous_car.simulation.validate_gps_ai_training_v2

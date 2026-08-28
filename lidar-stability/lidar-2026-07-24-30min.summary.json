@@ -1,0 +1,22 @@
+{
+  "url": "http://192.168.137.2:8080/api/lidar",
+  "duration_seconds": 1804.047,
+  "sample_count": 348,
+  "connected_samples": 308,
+  "availability_percent": 88.506,
+  "disconnect_count": 1,
+  "reconnect_count": 0,
+  "rotation_hz": {
+    "minimum": 9.705555555555556,
+    "mean": 9.999476911976911,
+    "maximum": 10.230555555555556
+  },
+  "point_count": {
+    "minimum": 442,
+    "mean": 452.00324675324674,
+    "maximum": 467
+  },
+  "errors": [
+    "lidar data timeout; reconnecting"
+  ]
+}

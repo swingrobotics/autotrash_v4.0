@@ -1,0 +1,7 @@
+# Install on the PC/GPU training machine, not required by the rover service.
+numpy>=1.26
+opencv-python-headless>=4.9
+torch>=2.6
+onnx>=1.17
+onnxscript>=0.2
+onnxruntime>=1.20

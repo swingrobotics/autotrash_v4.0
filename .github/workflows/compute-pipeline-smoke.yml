@@ -1,0 +1,53 @@
+name: SWING Compute Training Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'swing_compute/**'
+      - 'compute_rover_api.py'
+      - 'compute_training_hmi.py'
+      - 'autonomous_car/ai/**'
+      - 'autonomous_car/recording/frame_recorder.py'
+      - 'autonomous_car/recording/record_manager.py'
+      - 'autonomous_car/recording/record_transfer.py'
+      - 'autonomous_car/simulation/validate_record_low_latency_v2.py'
+      - 'autonomous_car/simulation/validate_record_transfer_v2.py'
+      - 'autonomous_car/simulation/validate_compute_training_pipeline_v2.py'
+      - 'requirements-ai-training.txt'
+      - '.github/workflows/compute-pipeline-smoke.yml'
+  pull_request:
+    paths:
+      - 'swing_compute/**'
+      - 'compute_rover_api.py'
+      - 'compute_training_hmi.py'
+      - 'autonomous_car/ai/**'
+      - 'autonomous_car/recording/frame_recorder.py'
+      - 'autonomous_car/recording/record_manager.py'
+      - 'autonomous_car/recording/record_transfer.py'
+      - 'autonomous_car/simulation/validate_record_low_latency_v2.py'
+      - 'autonomous_car/simulation/validate_record_transfer_v2.py'
+      - 'autonomous_car/simulation/validate_compute_training_pipeline_v2.py'
+      - 'requirements-ai-training.txt'
+      - '.github/workflows/compute-pipeline-smoke.yml'
+
+jobs:
+  base-quick-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-ai-training.txt
+      - name: JPEG RECORD control-priority regression
+        run: python -m autonomous_car.simulation.validate_record_low_latency_v2
+      - name: Recursive USB and LAN RECORD transfer regression
+        run: python -m autonomous_car.simulation.validate_record_transfer_v2
+      - name: Install training runtime
+        run: python -m pip install -r requirements-ai-training.txt
+      - name: JPEG-only BASE then QUICK training/evaluation/ONNX smoke
+        run: python -m autonomous_car.simulation.validate_compute_training_pipeline_v2

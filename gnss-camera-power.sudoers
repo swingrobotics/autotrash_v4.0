@@ -1,0 +1,1 @@
+gnss ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot

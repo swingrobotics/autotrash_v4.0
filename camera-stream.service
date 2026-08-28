@@ -1,0 +1,16 @@
+[Unit]
+Description=GNSS Autonomy V2 final web control
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gnss/camera-stream
+ExecStart=/home/gnss/camera-stream/.venv/bin/python3 /home/gnss/camera-stream/server_v2_final.py
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

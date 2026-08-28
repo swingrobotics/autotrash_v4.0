@@ -1,0 +1,20 @@
+{
+  "url": "http://192.168.137.2:8080/api/lidar",
+  "duration_seconds": 10.268,
+  "sample_count": 5,
+  "connected_samples": 5,
+  "availability_percent": 100.0,
+  "disconnect_count": 0,
+  "reconnect_count": 0,
+  "rotation_hz": {
+    "minimum": 9.730555555555556,
+    "mean": 9.909444444444444,
+    "maximum": 10.061111111111112
+  },
+  "point_count": {
+    "minimum": 452,
+    "mean": 458.8,
+    "maximum": 467
+  },
+  "errors": []
+}

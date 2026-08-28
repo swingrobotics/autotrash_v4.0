@@ -1,0 +1,203 @@
+name: SWING Compute Worker CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  worker-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile worker, rover bridge and HMI
+        run: python -m compileall -q swing_compute scripts/run_compute_worker.py scripts/run_compute_manager.py compute_worker_hmi.py compute_training_hmi.py compute_rover_api.py unified_dashboard_data_tools.py
+      - name: Worker pipeline status contract
+        run: |
+          python - <<'PY'
+          import tempfile
+          from swing_compute.pipeline_worker import PipelineComputeWorker
+          from swing_compute.worker import WorkerConfig
+
+          with tempfile.TemporaryDirectory() as directory:
+              worker = PipelineComputeWorker(WorkerConfig(host='127.0.0.1', port=18765, data_root=directory))
+              status = worker.status()
+              assert status['service'] == 'swing-compute-worker'
+              assert status['version'] == '0.3.0'
+              assert status['capabilities']['record_incremental_sync'] is True
+              assert status['capabilities']['quick_fine_tune'] is True
+              job = worker.jobs.create({'kind': 'diagnostic'})
+              assert job['state'] == 'QUEUED'
+              assert job['artifact_token']
+              worker.jobs.stop_event.set()
+          print('worker v0.3 status/job contract verified')
+          PY
+      - name: Windows Manager contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import swing_compute.windows_manager as manager
+
+          assert manager.MANAGER_VERSION == '0.3.0'
+          source = Path('swing_compute/windows_manager.py').read_text(encoding='utf-8')
+          required = [
+              'does not add a Startup entry',
+              'Worker 시작',
+              'Worker 중지',
+              'Windows를 재부팅하면 Worker는 자동으로 시작되지 않습니다.',
+          ]
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f'Windows Manager contract missing: {missing}')
+          print('Windows Manager explicit-start contract verified')
+          PY
+      - name: Rover transfer security contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('compute_rover_api.py').read_text(encoding='utf-8')
+          required = [
+              'TRANSFER_TTL_SECONDS',
+              'X-SWING-Transfer-Token',
+              'Range',
+              'RECORD_FILE_NOT_ALLOWED',
+              '/api/v2/compute/recording-manifest',
+              '/api/v2/compute/recording-file',
+              '/api/v2/compute/base-file',
+              '/api/v2/compute/model/install',
+              'validation_stage="TRAINED"',
+          ]
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f'rover compute transfer contract missing: {missing}')
+          print('rover transfer/model install contract verified')
+          PY
+      - name: Training pipeline contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('swing_compute/training_pipeline.py').read_text(encoding='utf-8')
+          worker = Path('swing_compute/pipeline_worker.py').read_text(encoding='utf-8')
+          required = [
+              'BASE_TRAINING_REQUIRES_AT_LEAST_3_RECORD_SESSIONS',
+              'QUICK_TRAINING_REQUIRES_BASE_CHECKPOINT_AND_CONTEXT',
+              'parameter.requires_grad = False',
+              'new_weight = 0.30 / len(new_indices)',
+              'old_weight = 0.70 / len(old_indices)',
+              'maximum_sample_hz',
+              'saved_frame_path',
+              'regression_guard_passed',
+              'OnnxExporter().export',
+              'READY_TO_INSTALL',
+          ]
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f'training pipeline contract missing: {missing}')
+          worker_required = [
+              'train_rover_records',
+              'RECORD_SHA256_MISMATCH',
+              'Range',
+              'parts[4] == "artifacts"',
+              'advertise_urls',
+          ]
+          missing = [item for item in worker_required if item not in worker]
+          if missing:
+              raise SystemExit(f'pipeline worker contract missing: {missing}')
+          print('BASE/QUICK pipeline contract verified')
+          PY
+      - name: Settings and training HMI integration contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from compute_worker_hmi import COMPUTE_WORKER_HMI
+          from compute_training_hmi import COMPUTE_TRAINING_HMI
+          from unified_dashboard_data_tools import UNIFIED_DASHBOARD_DATA_TOOLS
+
+          worker_hmi = COMPUTE_WORKER_HMI.decode('utf-8')
+          train_hmi = COMPUTE_TRAINING_HMI.decode('utf-8')
+          data_tools = Path('unified_dashboard_data_tools.py').read_text(encoding='utf-8')
+          worker_required = [
+              "const WORKER='http://127.0.0.1:8765'",
+              "#view-system .grid",
+              "/api/v1/status",
+              "kind:'diagnostic'",
+          ]
+          train_required = [
+              '새 베이스 모델',
+              '빠른 보강 학습',
+              "document.querySelectorAll('.rec-ai:checked')",
+              "/api/v2/compute/transfer",
+              "kind:'train_rover_records'",
+              "/api/v2/compute/model/install",
+              'regression_guard_passed',
+          ]
+          if not all(item in worker_hmi for item in worker_required):
+              raise SystemExit('Compute Worker settings HMI contract missing')
+          if not all(item in train_hmi for item in train_required):
+              raise SystemExit('Compute training HMI contract missing')
+          for item in [
+              'from compute_worker_hmi import COMPUTE_WORKER_HMI',
+              'from compute_training_hmi import COMPUTE_TRAINING_HMI',
+              'from compute_rover_api import install_compute_rover_api',
+              'install_compute_rover_api()',
+          ]:
+              if item not in data_tools:
+                  raise SystemExit(f'compute integration missing: {item}')
+          if b'compute-training-panel' not in UNIFIED_DASHBOARD_DATA_TOOLS:
+              raise SystemExit('Compute training panel absent from advanced page')
+          print('Compute settings/training UI integration verified')
+          PY
+      - name: Dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          from compute_worker_hmi import COMPUTE_WORKER_HMI
+          from compute_training_hmi import COMPUTE_TRAINING_HMI
+          index = 0
+          for source in (COMPUTE_WORKER_HMI, COMPUTE_TRAINING_HMI):
+              for script in re.findall(r'<script[^>]*>(.*?)</script>', source.decode('utf-8'), flags=re.S | re.I):
+                  Path(f'/tmp/compute-worker-{index}.js').write_text(script, encoding='utf-8')
+                  index += 1
+          if not index:
+              raise SystemExit('No compute HMI JavaScript found')
+          PY
+          for script in /tmp/compute-worker-*.js; do node --check "$script"; done
+      - name: Windows packaging and release contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          installer = Path('packaging/windows/SWINGComputeWorker.iss').read_text(encoding='utf-8')
+          release = Path('.github/workflows/compute-worker-release.yml').read_text(encoding='utf-8')
+          runner = Path('scripts/run_compute_worker.py').read_text(encoding='utf-8')
+          if 'swing_compute.pipeline_worker' not in runner:
+              raise SystemExit('Windows entrypoint is not the pipeline worker')
+          required_installer = [
+              'SWING-Compute-Worker-Setup',
+              'ManagerExeName',
+              '{autodesktop}\\SWING Compute Worker',
+              '[InstallDelete]',
+              '{userstartup}\\SWING Compute Worker.lnk',
+              'profile=private',
+              'localport=8765',
+          ]
+          missing = [item for item in required_installer if item not in installer]
+          if missing:
+              raise SystemExit(f'Windows installer contract missing: {missing}')
+          required_release = [
+              'workflow_dispatch:',
+              '.github/releases/compute-worker-version.txt',
+              'pyinstaller',
+              'Inno Setup',
+              'gh release create',
+              'SWING-Compute-Worker-Setup.exe.sha256',
+          ]
+          missing = [item for item in required_release if item not in release]
+          if missing:
+              raise SystemExit(f'Compute Worker release workflow contract missing: {missing}')
+          print('Windows packaging/release contract verified')
+          PY

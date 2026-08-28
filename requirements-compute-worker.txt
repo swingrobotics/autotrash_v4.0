@@ -1,0 +1,9 @@
+# Runtime bundled into the Windows SWING Compute Worker installer.
+# Keep CPU-capable packages here; CUDA is detected automatically if the
+# installed PyTorch runtime exposes a compatible GPU in a future build.
+-r requirements-ai-training.txt
+psutil>=6.0
+openvino>=2025.0
+imageio-ffmpeg>=0.6
+mcap>=1.2
+pyinstaller>=6.10

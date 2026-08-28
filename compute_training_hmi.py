@@ -1,0 +1,58 @@
+"""User-facing rover-to-PC AUTO_AI training workflow for /v2."""
+
+COMPUTE_TRAINING_HMI = r'''
+<style id="compute-training-hmi-style">
+#compute-training-panel .ct-modes{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:10px}
+#compute-training-panel .ct-mode{display:block;padding:10px;border:1px solid var(--line);border-radius:5px;background:rgba(255,255,255,.012);cursor:pointer}
+#compute-training-panel .ct-mode input{min-width:auto;margin-right:6px}#compute-training-panel .ct-mode b{font-size:10px}#compute-training-panel .ct-mode small{display:block;margin:5px 0 0 22px;color:var(--muted);font-size:9px;line-height:1.45}
+#compute-training-panel .ct-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}#compute-training-panel .ct-field label{display:block;margin-bottom:5px}
+#compute-training-panel .ct-field input,#compute-training-panel .ct-field select{width:100%}
+#compute-training-panel .ct-progress{height:7px;margin-top:10px;border:1px solid var(--line);border-radius:3px;overflow:hidden;background:#0d1010}#compute-training-panel .ct-progress>i{display:block;width:0;height:100%;background:var(--ok);transition:width .2s ease}
+#compute-training-panel .ct-status{margin-top:8px;padding:9px 10px;border-left:3px solid rgba(255,255,255,.15);background:#121515;color:#9ba29e;font-size:9px;line-height:1.55;white-space:pre-wrap}#compute-training-panel .ct-status.good{border-left-color:var(--ok)}#compute-training-panel .ct-status.warn{border-left-color:var(--warn)}#compute-training-panel .ct-status.bad{border-left-color:var(--bad)}
+#compute-training-panel .ct-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px}#compute-training-panel .ct-result-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:9px;background:rgba(255,255,255,.07)}#compute-training-panel .ct-result{padding:8px;background:#151818}#compute-training-panel .ct-result span{display:block;color:var(--muted);font-size:8px}#compute-training-panel .ct-result b{display:block;margin-top:4px;font:650 10px ui-monospace,monospace}
+@media(max-width:700px){#compute-training-panel .ct-modes,#compute-training-panel .ct-grid{grid-template-columns:1fr}#compute-training-panel .ct-result-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<script>
+(function(){
+ const WORKER='http://127.0.0.1:8765';
+ const grid=document.querySelector('#view-data .grid');if(!grid)return;
+ const panel=document.createElement('div');panel.id='compute-training-panel';panel.className='panel span12';panel.innerHTML=`
+  <h2>AI 모델 학습</h2>
+  <p class="sectionnote">위 주행 기록에서 학습할 RECORD를 선택하세요. 실제 연산은 이 PC의 SWING Compute Worker가 맡고, 차량에는 검증 전 후보 모델로만 등록합니다.</p>
+  <div class="ct-modes">
+   <label class="ct-mode"><input type="radio" name="ct-mode" value="BASE" checked><b>새 베이스 모델</b><small>전체 주행 기록 3개 이상으로 새 기준 모델을 만듭니다.</small></label>
+   <label class="ct-mode"><input type="radio" name="ct-mode" value="QUICK"><b>빠른 보강 학습</b><small>기존 모델을 유지하면서 선택한 문제구간 RECORD를 집중 보강합니다.</small></label>
+  </div>
+  <div class="ct-grid">
+   <div class="ct-field"><label>새 모델 이름</label><input id="ct-model-id" placeholder="swing-ai-v1"></div>
+   <div class="ct-field"><label>기준 모델 · 빠른 보강일 때</label><select id="ct-base-model" disabled></select></div>
+  </div>
+  <div id="ct-selection" class="ct-status">위 RECORD 목록에서 학습 기록을 선택하세요.</div>
+  <div class="ct-progress"><i id="ct-progress-bar"></i></div>
+  <div id="ct-job-status" class="ct-status">학습 대기 중</div>
+  <div id="ct-result"></div>
+  <div class="ct-actions"><button id="ct-start" class="primary">베이스 모델 학습 시작</button><button id="ct-cancel" disabled>학습 취소</button><span id="ct-worker" class="pill">Compute Worker 확인 중</span></div>`;
+ grid.appendChild(panel);
+ const el=id=>document.getElementById(id);let currentJob=null;let polling=false;let workerStatus=null;
+ const mode=()=>document.querySelector('input[name=ct-mode]:checked')?.value||'BASE';
+ const selected=()=>[...document.querySelectorAll('.rec-ai:checked')].map(x=>x.value);
+ const models=()=>((typeof S!=='undefined'&&S?.ai?.models)||[]).filter(m=>(m.policy_type||'AUTO_AI')==='AUTO_AI');
+ const trainedModels=()=>models().filter(m=>m.checkpoint_file&&m.training_context_file&&Array.isArray(m.training?.source_sessions)&&m.training.source_sessions.length);
+ const errText=e=>String(e?.message||e||'알 수 없는 오류');
+ async function fetchJson(url,options={}){const r=await fetch(url,{cache:'no-store',...options});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
+ function roverPost(path,body){return fetchJson(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+ function workerPost(path,body){return fetchJson(WORKER+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+ function phaseName(value){return ({QUEUED:'대기',SYNCING:'RECORD 동기화',BUILDING_DATASET:'센서 정렬',MATERIALIZING:'학습 영상 경량화',TRAINING:'AI 학습',EVALUATING:'고정 검증구간 평가',EXPORTING:'ONNX 변환·검증',READY_TO_INSTALL:'차량 등록 준비',SUCCEEDED:'완료',FAILED:'실패',CANCELED:'취소'}[value]||value||'처리 중')}
+ function defaultName(){if(el('ct-model-id').value.trim())return;const date=new Date();const p=n=>String(n).padStart(2,'0');el('ct-model-id').value=`swing-ai-${date.getFullYear()}${p(date.getMonth()+1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}`}
+ function refreshBaseModels(){const select=el('ct-base-model');const before=select.value;const list=trainedModels();select.innerHTML=list.length?list.map(m=>`<option value="${m.model_id}">${m.model_id} · ${m.validation_stage||'TRAINED'}</option>`).join(''):'<option value="">보강 가능한 기준 모델 없음</option>';if(list.some(m=>m.model_id===before))select.value=before;select.disabled=mode()!=='QUICK'||!list.length}
+ function syncSelection(){const records=selected();const m=mode();const base=trainedModels().find(x=>x.model_id===el('ct-base-model').value);let text=m==='BASE'?`${records.length}개 RECORD 선택됨 · 베이스 모델은 최소 3개가 필요합니다.`:`보강 RECORD ${records.length}개 선택됨${base?` · 기준 ${base.model_id}`:' · 기준 모델을 선택하세요.'}`;el('ct-selection').textContent=text;el('ct-selection').className=`ct-status ${(m==='BASE'?records.length>=3:records.length>=1&&base)?'good':'warn'}`;el('ct-start').textContent=m==='BASE'?'베이스 모델 학습 시작':'빠른 보강 학습 시작';el('ct-start').disabled=!!currentJob||!workerStatus||(m==='BASE'?records.length<3:records.length<1||!base);refreshBaseModels()}
+ function renderResult(job,installed){const result=job?.result||{};const ev=result.evaluation_summary||{};const cmp=result.regression_comparison;const steering=Number(ev.steering_mae_degrees);const throttle=Number(ev.throttle_mae);const sync=result.sync||{};const guard=cmp?cmp.regression_guard_passed:null;el('ct-result').innerHTML=`<div class="ct-result-grid"><div class="ct-result"><span>후보 모델</span><b>${result.model_id||'-'}</b></div><div class="ct-result"><span>조향 MAE</span><b>${Number.isFinite(steering)?steering.toFixed(2)+'°':'-'}</b></div><div class="ct-result"><span>스로틀 MAE</span><b>${Number.isFinite(throttle)?throttle.toFixed(3):'-'}</b></div><div class="ct-result"><span>기존 성능 유지</span><b class="${guard===false?'bad':'good'}">${guard==null?'BASE':guard?'PASS':'FAIL'}</b></div></div><div class="ct-status ${installed?'good':guard===false?'bad':'warn'}">${installed?'차량에 TRAINED 후보 모델로 등록했습니다. 실제 시험과 검증 단계 승격은 별도로 진행하세요.':guard===false?'고정 검증구간에서 기존 성능 저하가 감지되어 차량에 자동 등록하지 않았습니다.':'학습은 완료됐지만 차량 등록 상태를 확인하세요.'}\n전송 ${(Number(sync.transferred_bytes||0)/1048576).toFixed(1)} MB · PC 캐시 재사용 ${(Number(sync.reused_bytes||0)/1048576).toFixed(1)} MB</div>`}
+ async function checkWorker(){try{workerStatus=await fetchJson(WORKER+'/api/v1/status');el('ct-worker').textContent=`${workerStatus.hostname||'PC'} · ${workerStatus.capabilities?.cuda?'GPU':'CPU'} 학습`;el('ct-worker').className='pill good'}catch(e){workerStatus=null;el('ct-worker').textContent='Compute Worker 미연결';el('ct-worker').className='pill warn'}syncSelection()}
+ async function start(){const m=mode();const corrections=selected();const modelId=el('ct-model-id').value.trim();if(!modelId)return alert('새 모델 이름을 입력하세요.');if(models().some(x=>x.model_id===modelId))return alert('같은 모델 이름이 이미 있습니다. 새 이름을 사용하세요.');let base=null;let sessions=[...corrections];if(m==='QUICK'){base=trainedModels().find(x=>x.model_id===el('ct-base-model').value);if(!base)return alert('보강할 기준 모델을 선택하세요.');sessions=[...(base.training?.source_sessions||[]),...corrections];sessions=[...new Set(sessions)]}el('ct-start').disabled=true;el('ct-result').innerHTML='';el('ct-job-status').className='ct-status warn';el('ct-job-status').textContent='차량에서 학습 데이터 전송 권한을 준비하는 중…';try{const transfer=await roverPost('/api/v2/compute/transfer',{sessions,base_model_id:base?.model_id||null});const job=await workerPost('/api/v1/jobs',{kind:'train_rover_records',rover_url:location.origin,transfer_token:transfer.token,model_id:modelId,mode:m,sessions,correction_sessions:m==='QUICK'?corrections:[],base_model_id:base?.model_id||null,target_hz:10});currentJob=job.job_id;el('ct-cancel').disabled=false;polling=true;poll()}catch(e){currentJob=null;el('ct-job-status').className='ct-status bad';el('ct-job-status').textContent='학습 시작 실패 · '+errText(e);syncSelection()}}
+ async function poll(){if(!currentJob||!polling)return;try{const job=await fetchJson(WORKER+'/api/v1/jobs/'+currentJob);el('ct-progress-bar').style.width=`${Math.round(Number(job.progress||0)*100)}%`;el('ct-job-status').className=`ct-status ${job.state==='FAILED'?'bad':job.state==='SUCCEEDED'?'good':'warn'}`;el('ct-job-status').textContent=`${phaseName(job.phase)} · ${Math.round(Number(job.progress||0)*100)}%\n${job.message||''}${job.telemetry?.epoch?`\nEpoch ${job.telemetry.epoch}/${job.telemetry.epochs}`:''}`;if(job.state==='SUCCEEDED'){polling=false;let installed=false;try{const cmp=job.result?.regression_comparison;if(cmp&&cmp.regression_guard_passed===false)throw new Error('REGRESSION_GUARD_FAILED');await roverPost('/api/v2/compute/model/install',{worker_urls:job.worker_urls||job.result?.worker_urls||workerStatus?.advertise_urls||[],job_id:job.job_id,model_id:job.result?.model_id,artifact_token:job.artifact_token});installed=true;if(typeof refresh==='function')await refresh()}catch(e){console.warn(e);if(errText(e).includes('REGRESSION_GUARD_FAILED'))el('ct-job-status').textContent+='\n기존 성능 저하로 자동 등록하지 않았습니다.';else el('ct-job-status').textContent+='\n차량 후보 등록 실패: '+errText(e)}renderResult(job,installed);currentJob=null;el('ct-cancel').disabled=true;syncSelection();return}if(job.state==='FAILED'||job.state==='CANCELED'){polling=false;currentJob=null;el('ct-cancel').disabled=true;el('ct-job-status').className='ct-status bad';el('ct-job-status').textContent=`${phaseName(job.phase)}\n${job.error||job.message||''}`;syncSelection();return}}catch(e){el('ct-job-status').textContent='Worker 상태 확인 실패 · '+errText(e)}setTimeout(poll,1000)}
+ el('ct-start').onclick=start;el('ct-cancel').onclick=async()=>{if(!currentJob)return;try{await fetchJson(WORKER+'/api/v1/jobs/'+currentJob,{method:'DELETE'});el('ct-job-status').textContent='취소 요청을 보냈습니다.'}catch(e){alert(errText(e))}};document.querySelectorAll('input[name=ct-mode]').forEach(x=>x.onchange=()=>{refreshBaseModels();syncSelection()});el('ct-base-model').onchange=syncSelection;document.addEventListener('change',e=>{if(e.target?.classList?.contains('rec-ai'))syncSelection()});defaultName();refreshBaseModels();checkWorker();setInterval(()=>{refreshBaseModels();syncSelection();if(!currentJob)checkWorker()},3000);
+})();
+</script>
+'''.encode('utf-8')
+
+__all__ = ["COMPUTE_TRAINING_HMI"]

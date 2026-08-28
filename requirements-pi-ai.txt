@@ -1,0 +1,2 @@
+# Compatibility alias: the production autonomy runtime now includes AUTO_AI/AUTO_GPS dependencies.
+-r requirements-autonomy.txt

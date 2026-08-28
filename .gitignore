@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+credentials.json
+credentials.*.json
+ntrip-config.json
+ntrip-config.json.tmp
+
+# Runtime calibration and generated state
+camera-calibration.json
+imu-calibration.json
+throttle-calibration.json
+vehicle-settings.json
+vehicle-settings.json.tmp
+recordings/
+gnss-backups/
+field-tests/
+maps/
+models/
+datasets/
+gps-routes/
+autonomy-auto.json
+
+# AI training outputs
+*.onnx
+*.pt
+*.pth
+*.ckpt
+
+# Windows Compute Worker build outputs
+build/
+dist/
+installer-dist/
+SWING-Compute-Worker.spec
+
+# Logs and local network setup results
+*.log
+ics-result.txt
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

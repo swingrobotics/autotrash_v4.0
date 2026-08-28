@@ -1,0 +1,83 @@
+name: RECORD Model Preview CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'autonomous_car/ai/record_preview.py'
+      - 'autonomous_car/ai/video_preview.py'
+      - 'autonomous_car/ai/runtime.py'
+      - 'autonomous_car/ai/gps_runtime.py'
+      - 'autonomous_car/ai/temporal_gps.py'
+      - 'autonomous_car/ai/measured_steering_gps.py'
+      - 'autonomous_car/ai/__init__.py'
+      - 'autonomous_car/routes/**'
+      - 'autonomous_car/recording/**'
+      - 'autonomous_car/simulation/validate_record_model_preview_v2.py'
+      - 'autonomous_car/simulation/validate_temporal_gps_training_v2.py'
+      - 'compute_record_preview_bridge.py'
+      - 'record_model_preview_hmi.py'
+      - 'record_replay_candidate_overlay_hmi.py'
+      - 'swing_compute/record_preview_worker_extensions.py'
+      - 'scripts/run_compute_worker.py'
+      - 'scripts/preview_ai_record.py'
+      - 'scripts/validate_record_preview_dashboard.py'
+      - '.github/workflows/record-model-preview-ci.yml'
+  pull_request:
+    paths:
+      - 'autonomous_car/ai/record_preview.py'
+      - 'autonomous_car/ai/video_preview.py'
+      - 'autonomous_car/ai/runtime.py'
+      - 'autonomous_car/ai/gps_runtime.py'
+      - 'autonomous_car/ai/temporal_gps.py'
+      - 'autonomous_car/ai/measured_steering_gps.py'
+      - 'autonomous_car/ai/__init__.py'
+      - 'autonomous_car/routes/**'
+      - 'autonomous_car/recording/**'
+      - 'autonomous_car/simulation/validate_record_model_preview_v2.py'
+      - 'autonomous_car/simulation/validate_temporal_gps_training_v2.py'
+      - 'compute_record_preview_bridge.py'
+      - 'record_model_preview_hmi.py'
+      - 'record_replay_candidate_overlay_hmi.py'
+      - 'swing_compute/record_preview_worker_extensions.py'
+      - 'scripts/run_compute_worker.py'
+      - 'scripts/preview_ai_record.py'
+      - 'scripts/validate_record_preview_dashboard.py'
+      - '.github/workflows/record-model-preview-ci.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install preview smoke dependencies
+        run: python -m pip install --disable-pip-version-check numpy opencv-python-headless
+      - name: Compile RECORD preview and temporal GPS integration
+        run: |
+          python -m py_compile \
+            autonomous_car/ai/record_preview.py \
+            autonomous_car/ai/gps_runtime.py \
+            autonomous_car/ai/temporal_gps.py \
+            autonomous_car/ai/measured_steering_gps.py \
+            autonomous_car/simulation/validate_record_model_preview_v2.py \
+            autonomous_car/simulation/validate_temporal_gps_training_v2.py \
+            compute_record_preview_bridge.py \
+            record_model_preview_hmi.py \
+            record_replay_candidate_overlay_hmi.py \
+            swing_compute/record_preview_worker_extensions.py \
+            scripts/run_compute_worker.py \
+            scripts/preview_ai_record.py \
+            scripts/validate_record_preview_dashboard.py
+      - name: Temporal GPS measured steering contract
+        run: python -m autonomous_car.simulation.validate_temporal_gps_training_v2
+      - name: Dashboard and Worker integration contract
+        run: PYTHONPATH=. python scripts/validate_record_preview_dashboard.py
+      - name: CLI import contract
+        run: PYTHONPATH=. python scripts/preview_ai_record.py --help >/dev/null
+      - name: Synchronized RECORD preview smoke
+        run: python -m autonomous_car.simulation.validate_record_model_preview_v2

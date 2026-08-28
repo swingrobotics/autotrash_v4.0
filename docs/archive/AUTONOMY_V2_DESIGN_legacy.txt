@@ -1,0 +1,228 @@
+ARCHIVED HISTORICAL DOCUMENT
+This file describes an earlier feature-branch design. Use README.md and docs/architecture.md for the current main contract.
+
+GNSS / AUTONOMOUS ROVER - AUTONOMY V2 FINAL DESIGN
+===================================================
+
+SOURCE OF TRUTH
+---------------
+This document is the current mode contract. Older deterministic AUTO_ROUTE / AUTO_HYBRID code may remain for regression and migration, but it is not the V2 AUTO_GPS driving policy.
+
+1. USER-FACING MODES
+====================
+
+MANUAL
+- Human drives 100%.
+- Lane assist OFF.
+- General obstacle intervention OFF.
+- Person auto-stop OFF.
+- GPS/SLAM/learned driving OFF.
+- Hard safety ON: E-stop, watchdog, Arduino health, steering freshness/limits, output bounds, fatal hardware faults.
+
+RECORD
+- Same driving behavior as MANUAL.
+- Human demonstrations are recorded with synchronized timestamps.
+- Camera, stabilized/raw LiDAR, IMU, requested/actual steering, requested/final throttle and hardware state are recorded.
+- GPS/RTK recording is selectable ON/OFF.
+- GPS OFF RECORD is the normal source for route-independent AUTO_AI training.
+- GPS ON RECORD can also be used for AUTO_AI with GPS ignored, but its primary additional use is AUTO_GPS route normalization/training.
+- Autonomous/FAULT/E-STOP sessions are rejected from imitation-learning datasets.
+- Frames where hard Safety actively stopped the vehicle are rejected as human driving labels.
+
+AUTO_AI
+- GPS-independent learned driving.
+- Inputs: camera + LiDAR sector features + IMU yaw-rate feature.
+- Output: steering + throttle.
+- General obstacle behavior comes from model inference/training.
+- External generic obstacle planner/lane correction/GPS correction are OFF.
+- Person detection is the explicit external driving override: person in danger path -> STOP.
+- Hard safety remains ON.
+
+AUTO_GPS
+- GPS-conditioned learned driving: conceptually AUTO_AI with normalized route-relative GPS information added.
+- Training source: human RECORD sessions with GPS ON and RTK FIXED samples.
+- Multiple GPS ON RECORD runs of the same route are fused into one normalized route before training.
+- Route fusion: RTK FIXED filtering -> jump filtering -> direction alignment -> distance-progress resampling -> per-station outlier rejection/median fusion -> smoothing/resampling.
+- Model inputs:
+  * camera
+  * LiDAR sector distances + observed masks
+  * IMU yaw rate
+  * normalized route-relative features derived from RTK position + IMU heading
+- Raw latitude/longitude are NOT fed directly to the neural network.
+- Route features currently include:
+  * signed cross-track error
+  * signed route heading error
+  * near-lookahead bearing error and distance
+  * far-lookahead bearing error and distance
+  * remaining route distance
+  * route progress
+- Output: steering + throttle.
+- General obstacle behavior comes from the GPS AI model, not the legacy external local-avoidance planner.
+- Person detection forces external STOP.
+- LiDAR/camera/GNSS/IMU freshness, RTK loss, route deviation, E-stop, Arduino, steering and watchdog faults remain fail-closed.
+- A GPS AI model is bound to the normalized route ID used to create its training dataset. Runtime refuses a route/model mismatch.
+- Explicit AUTO_GPS may use CLOSED_AREA_VALIDATED or AUTO_ALLOWED models.
+- Top-level AUTO may select a GPS model only at AUTO_ALLOWED.
+
+AUTO_LOCAL
+- GPS-independent saved-map navigation.
+- LiDAR occupancy map + IMU-supported localization/SLAM.
+- Named destination -> inflated-grid A* -> Pure Pursuit/local planner.
+- Lane assist may participate only when reliable; AUTO_LOCAL must work without lane markings.
+- Local LiDAR avoidance/replan and final obstacle stop remain active.
+- Person detection forces STOP.
+- Localization loss holds/stops and persistent loss faults.
+
+AUTO
+- Top-level strategy selector, not a separate low-level controller.
+- Priority:
+  1) selected normalized GPS route + matching AUTO_ALLOWED GPS AI model + GPS/RTK preflight -> AUTO_GPS
+  2) selected local map/destination + successful localization -> AUTO_LOCAL
+  3) environment tags + matching AUTO_ALLOWED route-independent model -> AUTO_AI
+  4) otherwise refuse autonomous motion.
+- AUTO_AI is never unconditional fallback.
+
+2. RECORD / DATASET RULES
+=========================
+
+AUTO_AI dataset
+- Human RECORD sessions only.
+- GPS is not a learned input.
+- Camera frame is the anchor timeline.
+- LiDAR/IMU/control are aligned by monotonic timestamp.
+- Stabilized LiDAR safety_points are preferred when present; historical raw points are supported as fallback.
+- Labels: target steering preferred (actual steering fallback), requested human throttle preferred.
+- Dataset splits are by entire RECORD session, not adjacent frames.
+- Scenario-balanced sampling prevents straight driving from dominating turns/avoidance examples.
+
+AUTO_GPS dataset
+- Same human-label purity rules as AUTO_AI.
+- Requires GPS ON recording, synchronized RTK FIXED GNSS and a valid IMU heading.
+- Every accepted frame receives the normalized route-relative feature vector.
+- Frames too far from the normalized reference route are rejected.
+- Dataset stores policy_type=AUTO_GPS and route_id.
+
+3. LEARNED MODEL STRUCTURES
+===========================
+
+AUTO_AI
+Camera CNN -> 128 features
+LiDAR 14-value encoder -> 32 features
+IMU auxiliary encoder -> 16 features
+Fusion -> control head -> steering + throttle
+
+AUTO_GPS
+Camera CNN -> 128 features
+LiDAR 14-value encoder -> 32 features
+IMU auxiliary encoder -> 16 features
+Route 8-value encoder -> 32 features
+Fusion -> control head -> steering + throttle
+
+Both are exported to ONNX for Raspberry Pi inference.
+
+4. MODEL REGISTRY / APPROVAL
+============================
+
+Model policy types are explicit:
+- AUTO_AI
+- AUTO_GPS
+
+AUTO_GPS models also carry route_id.
+Generic AUTO_AI selection never returns AUTO_GPS models.
+GPS route selection never accepts AUTO_AI models or a GPS model trained for another route.
+
+Lifecycle:
+TRAINED
+  -> OFFLINE_VALIDATED
+  -> CLOSED_AREA_VALIDATED
+  -> AUTO_ALLOWED
+
+Training completion alone never authorizes top-level AUTO.
+
+5. GPS ROUTE MANAGEMENT
+=======================
+
+- Store multiple normalized GPS routes under gps-routes/ runtime storage.
+- Each route stores route_id, origin, source RECORD sessions, normalized path points, creation time and fusion quality metrics.
+- At least two GPS ON human RECORD sessions are required by the production normalizer.
+- Dashboard/API can build a route from multiple session IDs and select a route + matching GPS model.
+- GPS runtime route files, model files and datasets are excluded from Git.
+
+6. LOCAL MAP MANAGEMENT
+=======================
+
+- Store multiple maps for different places.
+- Each map stores stable ID/name, map asset, reference frame, quality, mapping sessions and named destinations.
+- Flow: MANUAL mapping -> save/refine map -> select map/destination -> AUTO_LOCAL localize -> plan -> drive.
+
+7. SAFETY
+=========
+
+Always-on hard safety:
+- E-STOP
+- command/communication watchdog
+- Arduino availability/timeout
+- steering availability/tracking/limits
+- maximum throttle/output bounds
+- sensor input freshness required by the selected policy
+- fatal hardware faults
+
+Mode-specific external driving intervention:
+- MANUAL/RECORD: none.
+- AUTO_AI: person STOP only; normal obstacle behavior learned.
+- AUTO_GPS: person STOP only; normal obstacle behavior learned. RTK/route validity is a required policy input condition.
+- AUTO_LOCAL: person STOP + deterministic local obstacle avoidance/replan/fallback stop.
+
+8. TRAINING / DEPLOYMENT FLOW
+=============================
+
+AUTO_AI:
+GPS OFF (or GPS-ignored) human RECORDs
+-> DatasetBuilder
+-> Trainer
+-> Evaluator
+-> ONNX Exporter
+-> ModelRegistry(AUTO_AI)
+-> closed-area validation
+-> AUTO_AI / optional AUTO_ALLOWED.
+
+AUTO_GPS:
+GPS ON human RECORDs of same route
+-> GpsRouteNormalizer
+-> normalized route
+-> GpsDatasetBuilder
+-> GpsTrainer
+-> GpsEvaluator
+-> GpsOnnxExporter
+-> ModelRegistry(AUTO_GPS, route_id)
+-> closed-area validation
+-> select route + matching model
+-> AUTO_GPS / optional AUTO_ALLOWED.
+
+9. IMPLEMENTATION STATUS
+========================
+
+Implemented on feature/autonomy-v2-architecture:
+- Six user-facing modes.
+- Mode-specific safety policy.
+- RECORD GPS ON/OFF and aligned sensor logging.
+- Human-label purity checks and Safety-stop frame exclusion.
+- AUTO_AI dataset/training/evaluation/ONNX/runtime.
+- Multi-map AUTO_LOCAL mapping/localization/A*/runtime.
+- Top-level AUTO selector.
+- Multi-run normalized GPS route builder.
+- GPS route-relative feature extraction.
+- AUTO_GPS dataset/training/evaluation/ONNX/runtime.
+- Route-bound AUTO_GPS model registry separation.
+- GPS route/model management API and /gps-ai dashboard.
+- Manual takeover isolation.
+- GitHub Actions core regression and AI end-to-end smoke tests.
+
+Legacy deterministic AutoGpsPlanner / AUTO_ROUTE / AUTO_HYBRID modules remain for regression/migration only. They no longer define V2 AUTO_GPS behavior.
+
+10. USER-FACING MODE LIST
+=========================
+
+MANUAL / RECORD / AUTO_AI / AUTO_GPS / AUTO_LOCAL / AUTO
+
+DISARMED / EMERGENCY_STOP / FAULT are system states, not user drive modes.
